@@ -3,8 +3,6 @@
 //! The main entry-point is [`parse_markdown`], which converts a Markdown
 //! string into a `Vec<Line<'static>>` that can be fed directly to a ratatui
 //! [`Paragraph`](ratatui::widgets::Paragraph).
-//!
-//! Code block rendering can be customised via [`CodeBlockOptions`].
 
 use std::io;
 use std::sync::LazyLock;
@@ -19,26 +17,6 @@ use syntect::util::LinesWithEndings;
 
 use super::term_caps::{chars, colors, supports_osc8};
 
-// ── Code block options ────────────────────────────────────────────────────────
-
-/// Options for rendering code blocks in markdown.
-#[derive(Debug, Clone, Copy)]
-pub struct CodeBlockOptions {
-  /// Whether to show line numbers in the gutter.
-  pub line_numbers: bool,
-  /// Whether to apply syntax highlighting.
-  pub syntax_highlighting: bool,
-}
-
-impl Default for CodeBlockOptions {
-  fn default() -> Self {
-    Self {
-      line_numbers: true,
-      syntax_highlighting: true,
-    }
-  }
-}
-
 // ── Syntax highlighting ───────────────────────────────────────────────────────
 
 /// Syntect syntax definitions, loaded once at first use.
@@ -50,28 +28,13 @@ static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 /// The syntect theme applied to all code blocks.
 const CODE_THEME: &str = "base16-ocean.dark";
 
-/// Background colour for code blocks - matches the base16-ocean.dark theme
-/// background (`#2b303b`) so syntax colours sit on their intended canvas.
-/// Uses term_caps for cross-platform color support.
-fn code_bg() -> Color {
-  colors::code_bg()
-}
-
-/// Render `code` with full syntax highlighting.
+/// Render `code` with syntax highlighting (minimal style: no line numbers, no background).
 ///
 /// `lang` is the language token from the opening fence (e.g. `"rust"`,
 /// `"python"`, `""`). Unknown languages fall back to the plain-text grammar.
-///
-/// Use `opts` to control line numbers and syntax highlighting.
-pub(crate) fn highlight_code_block(code: &str, lang: &str, width: u16, opts: CodeBlockOptions) -> Vec<Line<'static>> {
-  // If syntax highlighting is disabled, use plain rendering (no background)
-  if !opts.syntax_highlighting {
-    return plain_code_lines(code, width, opts.line_numbers, None);
-  }
-
+pub(crate) fn highlight_code_block(code: &str, lang: &str) -> Vec<Line<'static>> {
   let ps = &*SYNTAX_SET;
   let ts = &*THEME_SET;
-  let bg = Some(code_bg());
 
   let syntax = if lang.is_empty() {
     ps.find_syntax_plain_text()
@@ -81,24 +44,26 @@ pub(crate) fn highlight_code_block(code: &str, lang: &str, width: u16, opts: Cod
 
   let theme = match ts.themes.get(CODE_THEME) {
     Some(t) => t,
-    None => return plain_code_lines(code, width, opts.line_numbers, bg),
+    None => return plain_code_lines(code),
   };
 
-  // Collect source lines up-front so we know the total count for number width.
+  // Collect source lines, dropping trailing empty lines.
   let mut source_lines: Vec<&str> = LinesWithEndings::from(code).collect();
-  // Drop the trailing empty entry produced by a final '\n'.
-  while source_lines.last().map(|l| l.trim_end_matches(['\n', '\r']).trim().is_empty()).unwrap_or(false) {
+  while source_lines
+    .last()
+    .map(|l| l.trim_end_matches(['\n', '\r']).trim().is_empty())
+    .unwrap_or(false)
+  {
     source_lines.pop();
   }
   if source_lines.is_empty() {
     return Vec::new();
   }
 
-  let num_width = source_lines.len().to_string().len().max(1);
   let mut h = HighlightLines::new(syntax, theme);
-  let mut content = Vec::with_capacity(source_lines.len());
+  let mut lines = Vec::with_capacity(source_lines.len());
 
-  for (i, source_line) in source_lines.iter().enumerate() {
+  for source_line in &source_lines {
     match h.highlight_line(source_line, ps) {
       Ok(ranges) => {
         let spans: Vec<Span<'static>> = ranges
@@ -107,9 +72,6 @@ pub(crate) fn highlight_code_block(code: &str, lang: &str, width: u16, opts: Cod
           .map(|(style, text)| {
             let fg = colors::rgb(style.foreground.r, style.foreground.g, style.foreground.b);
             let mut s = Style::default().fg(fg);
-            if let Some(bg_color) = bg {
-              s = s.bg(bg_color);
-            }
             if style.font_style.contains(FontStyle::BOLD) {
               s = s.add_modifier(Modifier::BOLD);
             }
@@ -122,115 +84,25 @@ pub(crate) fn highlight_code_block(code: &str, lang: &str, width: u16, opts: Cod
             Span::styled(text.trim_end_matches('\n').to_string(), s)
           })
           .collect();
-        content.push(code_line(spans, i + 1, num_width, width, bg, opts.line_numbers));
+        lines.push(Line::from(spans));
       }
       Err(_) => {
-        let mut style = Style::default().fg(Color::Yellow);
-        if let Some(bg_color) = bg {
-          style = style.bg(bg_color);
-        }
-        content.push(code_line(
-          vec![Span::styled(
-            source_line.trim_end_matches('\n').to_string(),
-            style,
-          )],
-          i + 1,
-          num_width,
-          width,
-          bg,
-          opts.line_numbers,
-        ));
+        lines.push(Line::from(Span::styled(
+          source_line.trim_end_matches('\n').to_string(),
+          Style::default().fg(Color::Yellow),
+        )));
       }
     }
-  }
-  content
-}
-
-/// Fallback: plain yellow lines when syntect is unavailable or highlighting disabled.
-fn plain_code_lines(code: &str, width: u16, show_line_numbers: bool, bg: Option<Color>) -> Vec<Line<'static>> {
-  let src: Vec<&str> = code.lines().collect();
-  if src.is_empty() {
-    return Vec::new();
-  }
-  let num_width = src.len().to_string().len().max(1);
-  let mut lines = Vec::with_capacity(src.len());
-  for (i, l) in src.iter().enumerate() {
-    let mut style = Style::default().fg(Color::Yellow);
-    if let Some(bg_color) = bg {
-      style = style.bg(bg_color);
-    }
-    lines.push(code_line(
-      vec![Span::styled(l.to_string(), style)],
-      i + 1,
-      num_width,
-      width,
-      bg,
-      show_line_numbers,
-    ));
   }
   lines
 }
 
-/// Build a single code-block line with optional line number gutter.
-///
-/// Layout (optionally on background color):
-/// ```text
-///  <1 char pad> [<line_num right-aligned> <gutter sep>] <code spans> <trailing pad>
-/// ```
-/// The trailing pad span explicitly fills the row to `width` so the background
-/// covers the full terminal width regardless of ratatui's line-style behaviour.
-/// When `bg` is `None`, no background is applied (for plain/disabled highlighting).
-fn code_line(spans: Vec<Span<'static>>, line_num: usize, num_width: usize, width: u16, bg: Option<Color>, show_line_numbers: bool) -> Line<'static> {
-  let code_chars: usize = spans.iter().map(|s| s.content.chars().count()).sum();
-
-  let mut all = Vec::with_capacity(spans.len() + 4);
-
-  // Helper to apply optional background
-  let with_bg = |style: Style| -> Style {
-    match bg {
-      Some(bg_color) => style.bg(bg_color),
-      None => style,
-    }
-  };
-
-  let prefix_len = if show_line_numbers {
-    // Get the gutter separator (Unicode or ASCII depending on terminal)
-    let gutter_sep = chars::gutter_sep();
-    // Fixed prefix length: 1 (left pad) + num_width (number) + gutter_sep length
-    let prefix_len = 1 + num_width + gutter_sep.chars().count();
-
-    // 1-char left padding.
-    all.push(Span::styled(" ", with_bg(Style::default())));
-    // Line number, right-aligned and muted.
-    all.push(Span::styled(
-      format!("{:>num_width$}", line_num),
-      with_bg(Style::default().fg(colors::code_gutter_fg())),
-    ));
-    // Gutter separator (uses term_caps for cross-platform char).
-    all.push(Span::styled(gutter_sep.to_string(), with_bg(Style::default().fg(colors::code_gutter_sep_fg()))));
-
-    prefix_len
-  } else {
-    // Just 1-char left padding when line numbers are disabled
-    all.push(Span::styled(" ", with_bg(Style::default())));
-    1
-  };
-
-  // Code content.
-  all.extend(spans);
-
-  // Trailing spaces to fill the rest of the row (only when background is enabled).
-  let used = prefix_len + code_chars;
-  let trailing = (width as usize).saturating_sub(used);
-  if trailing > 0 && bg.is_some() {
-    all.push(Span::styled(" ".repeat(trailing), with_bg(Style::default())));
-  }
-
-  let mut line = Line::from(all);
-  if let Some(bg_color) = bg {
-    line.style = Style::default().bg(bg_color);
-  }
-  line
+/// Fallback: plain yellow lines when syntect theme is unavailable.
+fn plain_code_lines(code: &str) -> Vec<Line<'static>> {
+  code
+    .lines()
+    .map(|l| Line::from(Span::styled(l.to_string(), Style::default().fg(Color::Yellow))))
+    .collect()
 }
 
 // ── Public API ────────────────────────────────────────────────────────────────
@@ -391,14 +263,9 @@ fn ratatui_to_crossterm_color(c: Color) -> crossterm::style::Color {
 /// document together with its rendered position, so that callers can apply
 /// OSC 8 terminal hyperlink escape sequences to the ratatui buffer.
 pub fn parse_markdown_with_links(input: &str, width: u16) -> (Vec<Line<'static>>, Vec<LinkSpan>) {
-  parse_markdown_with_links_opts(input, width, CodeBlockOptions::default())
-}
-
-/// Like [`parse_markdown_with_links`] but with configurable code block options.
-pub fn parse_markdown_with_links_opts(input: &str, width: u16, code_opts: CodeBlockOptions) -> (Vec<Line<'static>>, Vec<LinkSpan>) {
   let options = Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_TABLES;
   let parser = Parser::new_ext(input, options);
-  let mut renderer = Renderer { width, code_opts, ..Default::default() };
+  let mut renderer = Renderer { width, ..Default::default() };
   for event in parser {
     renderer.process(event);
   }
@@ -448,10 +315,9 @@ struct Renderer {
   link_col_start: usize,
   /// Collected link positions for the entire document.
   links: Vec<LinkSpan>,
-  /// Available render width passed through to code-block helpers.
+  /// Available render width (kept for potential future use).
+  #[allow(dead_code)]
   width: u16,
-  /// Code block rendering options.
-  code_opts: CodeBlockOptions,
 }
 
 impl Renderer {
@@ -715,9 +581,8 @@ impl Renderer {
       // ── Code blocks ───────────────────────────────────────────────────
       TagEnd::CodeBlock => {
         // Render the accumulated text in one shot so that multiple
-        // Text events (e.g. inside list items) produce a single block
-        // with a shared line-number gutter.
-        self.lines.extend(highlight_code_block(&self.code_text, &self.code_lang, self.width, self.code_opts));
+        // Text events (e.g. inside list items) produce a single block.
+        self.lines.extend(highlight_code_block(&self.code_text, &self.code_lang));
         self.code_text.clear();
         self.in_code_block = false;
         self.code_lang.clear();
@@ -789,6 +654,12 @@ mod tests {
 
   fn text_of(line: &Line<'_>) -> String {
     line.spans.iter().map(|s| s.content.as_ref()).collect()
+  }
+
+  #[allow(dead_code)]
+  fn has_syntax_color(line: &Line<'_>) -> bool {
+    // Check if any span has a non-default foreground color (syntax highlighting applied)
+    line.spans.iter().any(|s| s.style.fg.is_some())
   }
 
   #[test]
@@ -919,77 +790,39 @@ mod tests {
 mod code_block_layout_tests {
   use super::*;
 
-  /// Returns true if the line carries the code_bg() background colour.
-  fn has_code_bg(l: &Line<'_>) -> bool {
-    let bg = code_bg();
-    l.style.bg == Some(bg) || l.spans.iter().any(|s| s.style.bg == Some(bg))
-  }
-
-  /// Default code options for tests.
-  fn test_opts() -> CodeBlockOptions {
-    CodeBlockOptions::default()
-  }
-
-  /// Find all (index, has_code_bg) pairs for a rendered markdown string.
-  fn bg_pattern(md: &str) -> Vec<bool> {
-    parse_markdown(md, 80).iter().map(has_code_bg).collect()
+  #[test]
+  fn multiline_code_block_produces_multiple_lines() {
+    let md = "```rust\nlet x = 1;\nlet y = 2;\nlet z = 3;\n```";
+    let lines = parse_markdown(md, 80);
+    // Should have 3 code lines
+    assert_eq!(lines.len(), 3, "should have 3 code lines");
   }
 
   #[test]
-  fn blank_separator_after_last_code_line() {
-    // Structure: text → blank → content... → blank
-    let p = bg_pattern("Some intro\n\n```rust\nlet x = 1;\n```\n\nAfter.");
-    // Find the last CODE_BG line and verify a non-CODE_BG blank follows it.
-    let last_code = p.iter().rposition(|&b| b).expect("at least one code line");
-    assert!(last_code + 1 < p.len(), "blank separator should follow last code line");
-    assert!(!p[last_code + 1], "line after last code line must be blank (no CODE_BG)");
+  fn code_block_has_no_background() {
+    let lines = parse_markdown("```rust\nlet x = 1;\n```", 80);
+    assert!(!lines.is_empty());
+    // No line or span should have background color
+    for line in &lines {
+      assert!(line.style.bg.is_none(), "line should not have background");
+      for span in &line.spans {
+        assert!(span.style.bg.is_none(), "span should not have background");
+      }
+    }
   }
 
   #[test]
-  fn blank_separator_between_adjacent_code_blocks() {
-    let p = bg_pattern("```rust\nfn a() {}\n```\n\n```rust\nfn b() {}\n```");
-    // Expect: CODE … CODE  false  CODE … CODE
-    // There must be at least one non-CODE_BG line sandwiched between two
-    // CODE_BG groups.
-    let first_code = p.iter().position(|&b| b).expect("code lines");
-    let last_code = p.iter().rposition(|&b| b).expect("code lines");
-    let has_gap = p[first_code..=last_code].iter().any(|&b| !b);
-    assert!(has_gap, "blank separator must exist between the two blocks");
-  }
-
-  #[test]
-  fn list_item_code_block_merged_into_one() {
+  fn list_item_code_block_merged() {
     // When pulldown-cmark emits multiple Text events for lines in a list-item
-    // code block, they must be merged into a single highlighted block - not
-    // rendered as separate blocks each with their own top/bottom pads.
-    let md = "1. Description:\n\n   ```rust\n   let x = 1;\n   let y = 2;\n   let z = 3;\n   ```\n\n2. Next item";
+    // code block, they must be merged into a single highlighted block.
+    let md = "1. Description:\n\n   ```rust\n   let x = 1;\n   let y = 2;\n   ```\n\n2. Next item";
     let lines = parse_markdown(md, 80);
 
-    // There should be exactly one contiguous run of CODE_BG lines.
-    let mut runs = 0u32;
-    let mut prev = false;
-    for l in &lines {
-      let cur = has_code_bg(l);
-      if cur && !prev {
-        runs += 1;
-      }
-      prev = cur;
-    }
-    assert_eq!(runs, 1, "all code lines should form a single CODE_BG run");
-
-    // The code block should contain lines numbered 1, 2, 3.
-    let code_lines: Vec<_> = lines
+    // Find code lines (those with syntax highlighting colors)
+    let code_line_count = lines
       .iter()
-      .filter(|l| has_code_bg(l))
-      .filter(|l| {
-        let t: String = l.spans.iter().map(|s| s.content.as_ref()).collect();
-        t.contains("│")
-      })
-      .collect();
-    assert_eq!(code_lines.len(), 3, "should have exactly 3 content lines");
-    let texts: Vec<String> = code_lines.iter().map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect()).collect();
-    assert!(texts[0].contains(" 1 "), "first line numbered 1");
-    assert!(texts[1].contains(" 2 "), "second line numbered 2");
-    assert!(texts[2].contains(" 3 "), "third line numbered 3");
+      .filter(|l| l.spans.iter().any(|s| s.style.fg.is_some() && s.content.contains("let")))
+      .count();
+    assert_eq!(code_line_count, 2, "should have 2 code lines with 'let'");
   }
 }

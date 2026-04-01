@@ -2,14 +2,13 @@
 //!
 //! This module provides caching of parsed markdown to avoid expensive
 //! re-parsing and syntax highlighting on every frame. The cache is
-//! invalidated when the exercise, page, terminal width, or display
-//! settings change.
+//! invalidated when the exercise, page, or terminal width change.
 
 use std::collections::HashMap;
 
 use ratatui::text::Line;
 
-use super::markdown::{CodeBlockOptions, LinkSpan};
+use super::markdown::LinkSpan;
 
 /// Cache key identifying a specific rendered content.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -20,10 +19,6 @@ pub struct CacheKey {
     pub content_type: ContentType,
     /// Terminal width at render time.
     pub width: u16,
-    /// Whether line numbers are enabled.
-    pub line_numbers: bool,
-    /// Whether syntax highlighting is enabled.
-    pub syntax_highlighting: bool,
 }
 
 /// Type of content being cached.
@@ -106,18 +101,11 @@ impl RenderCache {
     }
 
     /// Build a cache key from the current render context.
-    pub fn make_key(
-        exercise_path: &str,
-        content_type: ContentType,
-        width: u16,
-        opts: CodeBlockOptions,
-    ) -> CacheKey {
+    pub fn make_key(exercise_path: &str, content_type: ContentType, width: u16) -> CacheKey {
         CacheKey {
             exercise_path: exercise_path.to_string(),
             content_type,
             width,
-            line_numbers: opts.line_numbers,
-            syntax_highlighting: opts.syntax_highlighting,
         }
     }
 
@@ -191,8 +179,6 @@ mod tests {
             exercise_path: path.to_string(),
             content_type,
             width: 80,
-            line_numbers: true,
-            syntax_highlighting: true,
         }
     }
 
@@ -229,8 +215,6 @@ mod tests {
             exercise_path: "01/01".to_string(),
             content_type: ContentType::Theory,
             width: 80,
-            line_numbers: true,
-            syntax_highlighting: true,
         };
         let key2 = CacheKey {
             width: 100,

@@ -229,10 +229,6 @@ pub mod chars {
         if TermCaps::get().unicode { "│  " } else { "|  " }
     }
 
-    /// Code block gutter separator: `  │  ` or `  |  `
-    pub fn gutter_sep() -> &'static str {
-        if TermCaps::get().unicode { "  │  " } else { "  |  " }
-    }
 }
 
 // ── Color fallbacks ───────────────────────────────────────────────────────────
@@ -249,22 +245,6 @@ pub mod colors {
         } else {
             rgb_to_ansi256(r, g, b)
         }
-    }
-
-    /// Code block background: dark blue-gray or indexed color.
-    pub fn code_bg() -> Color {
-        // base16-ocean.dark background: #2b303b
-        rgb(43, 48, 59)
-    }
-
-    /// Code gutter foreground (muted).
-    pub fn code_gutter_fg() -> Color {
-        rgb(100, 105, 128)
-    }
-
-    /// Code gutter separator foreground.
-    pub fn code_gutter_sep_fg() -> Color {
-        rgb(55, 60, 78)
     }
 
     /// Convert RGB to closest ANSI 256 color.
@@ -375,7 +355,6 @@ mod tests {
         // These should work regardless of unicode support
         assert!(!chars::vertical().is_empty());
         assert!(!chars::horizontal().is_empty());
-        assert!(!chars::gutter_sep().is_empty());
         assert!(!chars::tree_branch().is_empty());
     }
 
