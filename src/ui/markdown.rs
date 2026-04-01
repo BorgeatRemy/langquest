@@ -49,11 +49,7 @@ pub(crate) fn highlight_code_block(code: &str, lang: &str) -> Vec<Line<'static>>
 
   // Collect source lines, dropping trailing empty lines.
   let mut source_lines: Vec<&str> = LinesWithEndings::from(code).collect();
-  while source_lines
-    .last()
-    .map(|l| l.trim_end_matches(['\n', '\r']).trim().is_empty())
-    .unwrap_or(false)
-  {
+  while source_lines.last().map(|l| l.trim_end_matches(['\n', '\r']).trim().is_empty()).unwrap_or(false) {
     source_lines.pop();
   }
   if source_lines.is_empty() {

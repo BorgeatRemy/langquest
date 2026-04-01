@@ -17,9 +17,12 @@ use ratatui::widgets::{Paragraph, Wrap};
 
 use crate::ui::markdown::{LinkSpan, PendingOsc8, parse_markdown_with_links};
 
+/// Type alias for the about page cache: (width, lines, links).
+type AboutCache = Option<(u16, Vec<Line<'static>>, Vec<LinkSpan>)>;
+
 /// Cached parsed content for the About page.
 /// Since content is static, we only need to cache by width.
-static ABOUT_CACHE: Mutex<Option<(u16, Vec<Line<'static>>, Vec<LinkSpan>)>> = Mutex::new(None);
+static ABOUT_CACHE: Mutex<AboutCache> = Mutex::new(None);
 
 /// Markdown source embedded at compile time.
 const ABOUT_MD: &str = include_str!("about.md");
@@ -102,9 +105,13 @@ pub fn render(frame: &mut Frame, area: Rect, scroll: usize) -> (PendingOsc8, usi
 
   frame.render_widget(para, content_area);
 
-  (PendingOsc8 {
-    area: content_area,
-    scroll,
-    links,
-  }, content_height, viewport_height)
+  (
+    PendingOsc8 {
+      area: content_area,
+      scroll,
+      links,
+    },
+    content_height,
+    viewport_height,
+  )
 }

@@ -352,13 +352,13 @@ impl App {
     }
 
     match key.code {
-    KeyCode::Char('q') | KeyCode::Esc => true,
+      KeyCode::Char('q') | KeyCode::Esc => true,
 
-    KeyCode::Char('m') => {
-      self.show_menu = !self.show_menu;
-      self.needs_redraw = true;
-      false
-    }
+      KeyCode::Char('m') => {
+        self.show_menu = !self.show_menu;
+        self.needs_redraw = true;
+        false
+      }
 
       KeyCode::Left => {
         self.handle_left();

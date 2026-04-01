@@ -93,11 +93,11 @@ pub fn render(app: &mut App, frame: &mut Frame, area: Rect) -> Option<PendingOsc
   };
 
   let (pending, content_height, viewport_height) = render_exercise(frame, area, &params, &mut app.render_cache);
-  
+
   // Update app with content dimensions for scroll limiting
   app.content_height = content_height;
   app.viewport_height = viewport_height;
-  
+
   pending
 }
 
@@ -139,7 +139,7 @@ fn render_topbar(frame: &mut Frame, area: Rect, exercise: &Exercise) {
 fn render_content(frame: &mut Frame, area: Rect, params: &ViewParams<'_>, cache: &mut RenderCache) -> (Option<PendingOsc8>, usize, usize) {
   // Viewport height is the area height minus the border (1 line for top border)
   let viewport_height = area.height.saturating_sub(1) as usize;
-  
+
   match params.page {
     ExercisePage::Theory => {
       let (pending, content_height) = render_theory(frame, area, params.exercise, params.scroll_offset, cache);
@@ -199,11 +199,14 @@ fn render_theory(frame: &mut Frame, area: Rect, exercise: &Exercise, scroll_offs
   let paragraph = Paragraph::new(lines).block(block).scroll((scroll_offset as u16, 0)).wrap(Wrap { trim: false });
 
   frame.render_widget(paragraph, area);
-  (Some(PendingOsc8 {
-    area: inner,
-    scroll: scroll_offset,
-    links,
-  }), content_height)
+  (
+    Some(PendingOsc8 {
+      area: inner,
+      scroll: scroll_offset,
+      links,
+    }),
+    content_height,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -237,11 +240,14 @@ fn render_task(frame: &mut Frame, area: Rect, exercise: &Exercise, scroll_offset
   let paragraph = Paragraph::new(lines).block(block).scroll((scroll_offset as u16, 0)).wrap(Wrap { trim: false });
 
   frame.render_widget(paragraph, area);
-  (Some(PendingOsc8 {
-    area: inner,
-    scroll: scroll_offset,
-    links,
-  }), content_height)
+  (
+    Some(PendingOsc8 {
+      area: inner,
+      scroll: scroll_offset,
+      links,
+    }),
+    content_height,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -350,7 +356,14 @@ fn build_output_lines<'a>(exercise: &'a Exercise, hints_revealed: usize, solutio
 // ---------------------------------------------------------------------------
 
 /// Returns (pending_osc8, content_line_count) for scroll limiting.
-fn render_solution_page(frame: &mut Frame, area: Rect, exercise: &Exercise, config_state: &ExerciseState, scroll_offset: usize, cache: &mut RenderCache) -> (Option<PendingOsc8>, usize) {
+fn render_solution_page(
+  frame: &mut Frame,
+  area: Rect,
+  exercise: &Exercise,
+  config_state: &ExerciseState,
+  scroll_offset: usize,
+  cache: &mut RenderCache,
+) -> (Option<PendingOsc8>, usize) {
   let solution_accessible = config_state.passed || config_state.solution_seen;
 
   if !solution_accessible {
@@ -363,10 +376,10 @@ fn render_solution_page(frame: &mut Frame, area: Rect, exercise: &Exercise, conf
 
   // Build content string for cache key hashing
   let mut content_for_hash = String::new();
-  if let Some(ref solution_path) = exercise.solution_source {
-    if let Ok(source) = fs::read_to_string(solution_path) {
-      content_for_hash.push_str(&source);
-    }
+  if let Some(ref solution_path) = exercise.solution_source
+    && let Ok(source) = fs::read_to_string(solution_path)
+  {
+    content_for_hash.push_str(&source);
   }
   if let Some(ref sd) = exercise.solution_data {
     content_for_hash.push_str(&sd.explanation);
@@ -379,13 +392,19 @@ fn render_solution_page(frame: &mut Frame, area: Rect, exercise: &Exercise, conf
     let title = scroll_title("Solution", scroll_offset, content_height, area.height);
     let block = Block::default().borders(Borders::TOP).title(title);
     let inner = block.inner(area);
-    let paragraph = Paragraph::new(cached.lines.clone()).block(block).scroll((scroll_offset as u16, 0)).wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(cached.lines.clone())
+      .block(block)
+      .scroll((scroll_offset as u16, 0))
+      .wrap(Wrap { trim: false });
     frame.render_widget(paragraph, area);
-    return (Some(PendingOsc8 {
-      area: inner,
-      scroll: scroll_offset,
-      links: cached.links.clone(),
-    }), content_height);
+    return (
+      Some(PendingOsc8 {
+        area: inner,
+        scroll: scroll_offset,
+        links: cached.links.clone(),
+      }),
+      content_height,
+    );
   }
 
   // Cache miss - build content
@@ -435,11 +454,14 @@ fn render_solution_page(frame: &mut Frame, area: Rect, exercise: &Exercise, conf
 
   frame.render_widget(paragraph, area);
 
-  (Some(PendingOsc8 {
-    area: inner,
-    scroll: scroll_offset,
-    links: solution_links,
-  }), content_height)
+  (
+    Some(PendingOsc8 {
+      area: inner,
+      scroll: scroll_offset,
+      links: solution_links,
+    }),
+    content_height,
+  )
 }
 
 /// Append the explanation section from `SolutionData` into `lines`.
@@ -448,10 +470,7 @@ fn append_explanation(lines: &mut Vec<Line<'static>>, solution_data: &crate::exe
     lines.push(Line::from(""));
     // Use term_caps for cross-platform separator characters
     let sep_char = chars::horizontal();
-    lines.push(Line::from(Span::styled(
-      sep_char.repeat(24),
-      Style::default().add_modifier(Modifier::DIM),
-    )));
+    lines.push(Line::from(Span::styled(sep_char.repeat(24), Style::default().add_modifier(Modifier::DIM))));
     lines.push(Line::from(""));
   }
   lines.push(Line::from(Span::styled(
