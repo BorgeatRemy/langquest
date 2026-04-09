@@ -20,6 +20,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install exercise toolchains (Go, g++, Catch2)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y g++ catch2 pkg-config golang-go
+
       - name: Configure cache
         uses: Swatinem/rust-cache@v2
 
