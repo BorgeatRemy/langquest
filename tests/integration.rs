@@ -549,15 +549,12 @@ mod runner {
     // fixture dirty on failure).
     fs::write(&starter, &original).expect("restore starter");
 
-    assert_eq!(
-      result.total, 1,
-      "expected 1 test case, got {} — output:\n{}",
-      result.total, result.output
-    );
+    assert_eq!(result.total, 1, "expected 1 test case, got {} — output:\n{}", result.total, result.output);
     assert!(
       (result.score - 1.0).abs() < f64::EPSILON,
       "expected perfect score, got {} — output:\n{}",
-      result.score, result.output
+      result.score,
+      result.output
     );
   }
 
