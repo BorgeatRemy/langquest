@@ -1,8 +1,8 @@
+import unittest
 # TODO: implement the greeting function
 def greeting():
     return ""
 
-import unittest
 
 class TestGreeting(unittest.TestCase):
     def test_greeting(self):
