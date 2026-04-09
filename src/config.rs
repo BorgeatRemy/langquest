@@ -115,6 +115,26 @@ impl Default for GoConfig {
   }
 }
 
+/// Configuration for the C++ toolchain.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CppConfig {
+  /// Command template used to compile the student's C++ source files.
+  ///
+  /// `<files>` is substituted with the list of `.cpp` files in the exercise
+  /// directory; `<out>` is substituted with the path to the compiled test
+  /// binary.  Catch2 flags are resolved automatically via `pkg-config` at
+  /// runtime and appended to the command.
+  pub cmd: String,
+}
+
+impl Default for CppConfig {
+  fn default() -> Self {
+    Self {
+      cmd: "g++ -std=c++20 <files> -o <out>".to_string(),
+    }
+  }
+}
+
 /// Top-level project configuration, persisted as `lq.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectConfig {
@@ -135,6 +155,10 @@ pub struct ProjectConfig {
   /// user can customise the command without recompiling.
   #[serde(default)]
   pub go: GoConfig,
+  /// C++ toolchain settings.  Written to `lq.toml` on first save so the
+  /// user can customise the command without recompiling.
+  #[serde(default)]
+  pub cpp: CppConfig,
   /// Ripes simulator settings.  Written to `lq.toml` on first save so the
   /// user can customise the command without recompiling.
   #[serde(default)]

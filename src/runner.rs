@@ -25,7 +25,7 @@ use std::sync::mpsc;
 use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use regex::RegexBuilder;
 
-use crate::config::{GoConfig, ProjectConfig, PythonConfig, RipesConfig, RustConfig};
+use crate::config::{CppConfig, GoConfig, ProjectConfig, PythonConfig, RipesConfig, RustConfig};
 use crate::exercise::{Exercise, Language};
 
 // ---------------------------------------------------------------------------
@@ -129,6 +129,7 @@ pub fn verify(exercise: &Exercise, config: &ProjectConfig) -> VerificationResult
     Language::Riscv => verify_riscv(exercise, &config.ripes),
     Language::Python => verify_python(exercise, &config.python),
     Language::Go => verify_go(exercise, &config.go),
+    Language::Cpp => verify_cpp(exercise, &config.cpp),
     Language::Text => verify_markdown(exercise),
   }
 }
@@ -773,6 +774,212 @@ fn parse_go_test_output(output: &str, threshold: f64) -> VerificationResult {
   }
 }
 
+// ---------------------------------------------------------------------------
+// C++ runner (Catch2)
+// ---------------------------------------------------------------------------
+
+/// Resolve Catch2 compiler and linker flags via `pkg-config`.
+///
+/// Returns `(cflags, ldflags)` as vectors of individual tokens.  Returns
+/// empty vectors when `pkg-config` is unavailable or Catch2 is not installed.
+fn resolve_catch2_flags() -> (Vec<String>, Vec<String>) {
+  let cflags = Command::new("pkg-config")
+    .args(["--cflags", "catch2-with-main"])
+    .output()
+    .ok()
+    .filter(|o| o.status.success())
+    .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(String::from).collect::<Vec<_>>())
+    .unwrap_or_default();
+
+  let ldflags = Command::new("pkg-config")
+    .args(["--libs", "catch2-with-main"])
+    .output()
+    .ok()
+    .filter(|o| o.status.success())
+    .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().map(String::from).collect::<Vec<_>>())
+    .unwrap_or_default();
+
+  (cflags, ldflags)
+}
+
+/// Collect all `.cpp` source files in the exercise directory, excluding
+/// the `solution/` subdirectory.
+fn collect_cpp_sources(exercise_dir: &Path) -> Vec<PathBuf> {
+  let mut sources = Vec::new();
+  if let Ok(entries) = fs::read_dir(exercise_dir) {
+    for entry in entries.flatten() {
+      let path = entry.path();
+      if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("cpp") {
+        sources.push(path);
+      }
+    }
+  }
+  sources.sort();
+  sources
+}
+
+/// Build the compile command for C++ exercises.
+///
+/// Parses the `[cpp] cmd` template, substitutes `<files>` with the collected
+/// `.cpp` source paths and `<out>` with the test binary path, then appends
+/// Catch2 flags resolved via `pkg-config`.
+fn build_cpp_command(cfg: &CppConfig, sources: &[PathBuf], out_path: &Path) -> Result<(PathBuf, Vec<String>), String> {
+  let tokens: Vec<&str> = cfg.cmd.split_whitespace().collect();
+  if tokens.is_empty() {
+    return Err("cpp.cmd is empty in lq.toml".to_string());
+  }
+
+  let binary = PathBuf::from(tokens[0]);
+
+  let (catch2_cflags, catch2_ldflags) = resolve_catch2_flags();
+
+  let mut args: Vec<String> = Vec::new();
+
+  for token in &tokens[1..] {
+    match *token {
+      "<files>" => {
+        // Insert Catch2 cflags before the source files
+        args.extend(catch2_cflags.iter().cloned());
+        for src in sources {
+          args.push(src.to_string_lossy().to_string());
+        }
+      }
+      "<out>" => {
+        args.push(out_path.to_string_lossy().to_string());
+      }
+      other => {
+        args.push(other.to_string());
+      }
+    }
+  }
+
+  // Append Catch2 linker flags at the end
+  args.extend(catch2_ldflags);
+
+  Ok((binary, args))
+}
+
+/// Compile all C++ sources in the exercise directory with Catch2 and run
+/// the resulting test binary.
+///
+/// Score is `passed / (passed + failed)` based on the Catch2 summary line.
+fn verify_cpp(exercise: &Exercise, cpp_cfg: &CppConfig) -> VerificationResult {
+  let threshold = exercise.language.threshold();
+  let test_bin = exercise.dir.join(".lq_test");
+
+  // --- collect sources ------------------------------------------------
+  let sources = collect_cpp_sources(&exercise.dir);
+  if sources.is_empty() {
+    return VerificationResult::zero("No .cpp files found in exercise directory".to_string(), threshold);
+  }
+
+  // --- compile --------------------------------------------------------
+  let (compile_bin, compile_args) = match build_cpp_command(cpp_cfg, &sources, &test_bin) {
+    Ok(b) => b,
+    Err(e) => return VerificationResult::zero(e, threshold),
+  };
+
+  let compile = Command::new(&compile_bin).args(&compile_args).current_dir(&exercise.dir).output();
+
+  let compile = match compile {
+    Ok(o) => o,
+    Err(e) => {
+      return VerificationResult::zero(
+        format!(
+          "Failed to run '{}': {e}\n\
+           Make sure g++ and Catch2 are installed.\n\
+           Install: brew install catch2 (macOS) / apt install catch2 (Linux)",
+          compile_bin.display()
+        ),
+        threshold,
+      );
+    }
+  };
+
+  if !compile.status.success() {
+    let out = combined_output(&compile);
+    return VerificationResult::zero(cap_output(&out, MAX_OUTPUT_LINES), threshold);
+  }
+
+  // --- run tests ------------------------------------------------------
+  let run = Command::new(&test_bin).current_dir(&exercise.dir).output();
+
+  // best-effort cleanup regardless of run outcome
+  let _ = fs::remove_file(&test_bin);
+
+  let run = match run {
+    Ok(o) => o,
+    Err(e) => {
+      return VerificationResult::zero(format!("Failed to execute test binary: {e}"), threshold);
+    }
+  };
+
+  let out = combined_output(&run);
+  parse_catch2_output(&out, threshold)
+}
+
+/// Parse Catch2 test output, extracting pass/fail counts from the summary.
+///
+/// Catch2 prints a summary line in one of two formats:
+///
+/// ```text
+/// test cases: 3 | 2 passed | 1 failed
+/// ```
+///
+/// or when all tests pass:
+///
+/// ```text
+/// All tests passed (5 assertions in 2 test cases)
+/// ```
+fn parse_catch2_output(output: &str, threshold: f64) -> VerificationResult {
+  // Try the "test cases: N | M passed | K failed" format first.
+  let summary_re = match regex::Regex::new(r"test cases:\s+(\d+)\s+\|\s+(\d+)\s+passed\s+\|\s+(\d+)\s+failed") {
+    Ok(r) => r,
+    Err(e) => {
+      return VerificationResult::zero(format!("Internal regex error: {e}"), threshold);
+    }
+  };
+
+  if let Some(caps) = summary_re.captures(output) {
+    let total: usize = caps[1].parse().unwrap_or(0);
+    let passed: usize = caps[2].parse().unwrap_or(0);
+    let score = if total > 0 { passed as f64 / total as f64 } else { 0.0 };
+
+    return VerificationResult {
+      score,
+      passed,
+      total,
+      output: cap_output(output, MAX_OUTPUT_LINES),
+      threshold,
+    };
+  }
+
+  // Try the "All tests passed (N assertions in M test cases)" format.
+  let all_pass_re = match regex::Regex::new(r"All tests passed\s+\(\d+\s+assertions?\s+in\s+(\d+)\s+test\s+cases?\)") {
+    Ok(r) => r,
+    Err(e) => {
+      return VerificationResult::zero(format!("Internal regex error: {e}"), threshold);
+    }
+  };
+
+  if let Some(caps) = all_pass_re.captures(output) {
+    let total: usize = caps[1].parse().unwrap_or(0);
+    return VerificationResult {
+      score: if total > 0 { 1.0 } else { 0.0 },
+      passed: total,
+      total,
+      output: cap_output(output, MAX_OUTPUT_LINES),
+      threshold,
+    };
+  }
+
+  // Try the "All tests passed (N assertions in 1 test case)" singular format
+  // (already handled by the regex above with `cases?`).
+
+  // No recognisable summary found - return the raw output as a zero result.
+  VerificationResult::zero(cap_output(output, MAX_OUTPUT_LINES), threshold)
+}
+
 /// Parse a pytest summary line such as `2 passed, 1 failed in 0.03s`.
 fn parse_pytest_output(output: &str, threshold: f64) -> VerificationResult {
   let passed_re = match regex::Regex::new(r"(\d+) passed") {
@@ -1257,5 +1464,42 @@ addi s2, s0, 1
       assert!(combined.contains("hello"));
       assert!(combined.contains("err"));
     }
+  }
+
+  // -- parse_catch2_output ---------------------------------------------
+
+  #[test]
+  fn parse_catch2_mixed() {
+    let out = "test cases: 3 | 2 passed | 1 failed\nassertions: 5 | 4 passed | 1 failed\n";
+    let r = parse_catch2_output(out, 1.0);
+    assert_eq!(r.passed, 2);
+    assert_eq!(r.total, 3);
+    assert!((r.score - 2.0 / 3.0).abs() < 1e-9);
+  }
+
+  #[test]
+  fn parse_catch2_all_passed() {
+    let out = "All tests passed (3 assertions in 2 test cases)\n";
+    let r = parse_catch2_output(out, 1.0);
+    assert_eq!(r.passed, 2);
+    assert_eq!(r.total, 2);
+    assert!((r.score - 1.0).abs() < f64::EPSILON);
+  }
+
+  #[test]
+  fn parse_catch2_single_test_passed() {
+    let out = "All tests passed (1 assertion in 1 test case)\n";
+    let r = parse_catch2_output(out, 1.0);
+    assert_eq!(r.passed, 1);
+    assert_eq!(r.total, 1);
+    assert!((r.score - 1.0).abs() < f64::EPSILON);
+  }
+
+  #[test]
+  fn parse_catch2_no_match() {
+    let out = "some random compiler output\n";
+    let r = parse_catch2_output(out, 1.0);
+    assert_eq!(r.total, 0);
+    assert_eq!(r.score, 0.0);
   }
 }

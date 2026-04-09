@@ -29,6 +29,8 @@ pub enum Language {
   Python,
   /// Go (`main.go`)
   Go,
+  /// C++ (`main.cpp`)
+  Cpp,
   /// Markdown / plain-text questions (`main.md`)
   Text,
 }
@@ -45,6 +47,7 @@ impl Language {
       "asm" | "s" | "S" => Some(Language::Riscv), // ambiguous; prefer frontmatter
       "py" => Some(Language::Python),
       "go" => Some(Language::Go),
+      "cpp" | "cc" | "cxx" => Some(Language::Cpp),
       "md" => Some(Language::Text),
       _ => None,
     }
@@ -58,6 +61,7 @@ impl Language {
       Language::Riscv => "asm",
       Language::Python => "py",
       Language::Go => "go",
+      Language::Cpp => "cpp",
       Language::Text => "md",
     }
   }
@@ -68,6 +72,7 @@ impl Language {
       Language::Rust => 1.0,
       Language::Python => 1.0,
       Language::Go => 1.0,
+      Language::Cpp => 1.0,
       Language::Riscv => 0.8,
       Language::Text => 0.75,
     }
@@ -80,6 +85,7 @@ impl Language {
       Language::Riscv => "RISC-V",
       Language::Python => "Python",
       Language::Go => "Go",
+      Language::Cpp => "C++",
       Language::Text => "Text",
     }
   }
@@ -94,6 +100,7 @@ impl Language {
       Language::Rust => "rust",
       Language::Python => "python",
       Language::Go => "go",
+      Language::Cpp => "cpp",
       Language::Riscv => "asm",
       Language::Text => "",
     }
@@ -106,6 +113,7 @@ impl Language {
       "riscv" => Some(Language::Riscv),
       "python" => Some(Language::Python),
       "go" => Some(Language::Go),
+      "cpp" | "c++" => Some(Language::Cpp),
       "text" => Some(Language::Text),
       _ => None,
     }
@@ -637,6 +645,8 @@ mod tests {
       ("rust", Language::Rust),
       ("RISCV", Language::Riscv),
       ("Python", Language::Python),
+      ("cpp", Language::Cpp),
+      ("c++", Language::Cpp),
       ("text", Language::Text),
     ] {
       assert_eq!(Language::parse(s), Some(expected));

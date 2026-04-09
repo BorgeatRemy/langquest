@@ -53,6 +53,12 @@ info:
         printf "  %-12s %s\n" "pytest"  "not found - optional, falls back to unittest"
     fi
     printf "  %-12s %s\n" "go"      "$(go version 2>/dev/null        || echo 'NOT FOUND - needed for Go exercises')"
+    printf "  %-12s %s\n" "g++"     "$(g++ --version 2>/dev/null | head -1 || echo 'NOT FOUND - needed for C++ exercises')"
+    if pkg-config --exists catch2-with-main 2>/dev/null; then
+        printf "  %-12s %s\n" "catch2"  "$(pkg-config --modversion catch2-with-main 2>/dev/null)"
+    else
+        printf "  %-12s %s\n" "catch2"  "not found - needed for C++ exercises (brew install catch2)"
+    fi
     if [[ -n "${RIPES_PATH:-}" ]]; then
         printf "  %-12s %s\n" "ripes" "RIPES_PATH=${RIPES_PATH}"
     elif command -v ripes >/dev/null 2>&1; then
@@ -89,6 +95,13 @@ check-deps:
                                                 warn "pytest"  "not found - optional, Python exercises will fall back to unittest"
     fi
     if v=$(go version 2>/dev/null);        then ok   "go"      "$v"; else fail "go"      "not found - needed for Go exercises (brew install go)"; fi
+    if v=$(g++ --version 2>/dev/null | head -1); then ok   "g++"     "$v"; else fail "g++"     "not found - needed for C++ exercises (brew install gcc or xcode-select --install)"; fi
+    if pkg-config --exists catch2-with-main 2>/dev/null; then
+        v=$(pkg-config --modversion catch2-with-main 2>/dev/null)
+                                                ok   "catch2"  "v$v"
+    else
+                                                warn "catch2"  "not found - C++ exercises won't compile (brew install catch2)"
+    fi
 
     echo ""
     echo "--- Ripes (RISC-V simulator) ---"
@@ -116,8 +129,9 @@ check-deps:
         echo "✓ All dependencies satisfied."
     fi
 
-# Setup all dependencies on macOS via Homebrew (installs brew itself if absent)
-setup-macos:
+# Setup all dependencies (platform-specific: macOS / Linux / Windows)
+[macos]
+setup:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -168,6 +182,20 @@ setup-macos:
         echo "✓ go:      $(go version)"
     fi
 
+    # ── C++ (g++ + Catch2) ────────────────────────────────────────────────────
+    if ! command -v g++ >/dev/null 2>&1; then
+        echo "g++ not found - installing Xcode Command Line Tools..."
+        xcode-select --install 2>/dev/null || echo "  (already installing or installed)"
+    else
+        echo "✓ g++:     $(g++ --version | head -1)"
+    fi
+    if ! pkg-config --exists catch2-with-main 2>/dev/null; then
+        echo "Installing Catch2..."
+        brew install catch2
+    else
+        echo "✓ catch2:  v$(pkg-config --modversion catch2-with-main)"
+    fi
+
     # ── Ripes (RISC-V simulator) ──────────────────────────────────────────────
     # Ripes is not available via Homebrew. lq ships a bundled macOS binary;
     # users can also set RIPES_PATH to point at their own installation.
@@ -188,6 +216,238 @@ setup-macos:
 
     echo ""
     echo "✓ Installation complete. Run 'just check-deps' to verify."
+
+[linux]
+setup:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # ── Detect package manager ────────────────────────────────────────────────
+    if command -v apt-get >/dev/null 2>&1; then
+        PM="apt"
+        INSTALL="sudo apt-get install -y"
+        UPDATE="sudo apt-get update -qq"
+    elif command -v dnf >/dev/null 2>&1; then
+        PM="dnf"
+        INSTALL="sudo dnf install -y"
+        UPDATE="true"
+    elif command -v pacman >/dev/null 2>&1; then
+        PM="pacman"
+        INSTALL="sudo pacman -S --noconfirm --needed"
+        UPDATE="sudo pacman -Sy"
+    else
+        echo "✗ No supported package manager found (apt, dnf, pacman)."
+        echo "  Install dependencies manually and run 'just check-deps' to verify."
+        exit 1
+    fi
+    echo "Detected package manager: $PM"
+    $UPDATE
+
+    # ── Rust (via rustup) ─────────────────────────────────────────────────────
+    if ! command -v rustup >/dev/null 2>&1; then
+        echo "Installing Rust via rustup..."
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path
+        source "${HOME}/.cargo/env"
+    else
+        echo "✓ rustup: $(rustup --version 2>/dev/null)"
+    fi
+    rustup component add rustfmt clippy 2>/dev/null
+    echo "✓ rustc:   $(rustc --version)"
+    echo "✓ rustfmt: $(rustfmt --version)"
+    echo "✓ clippy:  $(cargo clippy --version)"
+
+    # ── Python ────────────────────────────────────────────────────────────────
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo "Installing Python..."
+        case $PM in
+            apt)    $INSTALL python3 python3-pip python3-venv ;;
+            dnf)    $INSTALL python3 python3-pip ;;
+            pacman) $INSTALL python python-pip ;;
+        esac
+    else
+        echo "✓ python3: $(python3 --version)"
+    fi
+    if ! python3 -m pytest --version >/dev/null 2>&1; then
+        echo "Installing pytest..."
+        pip3 install --quiet --user pytest 2>/dev/null || python3 -m pip install --quiet --user pytest
+    else
+        echo "✓ pytest:  $(python3 -m pytest --version 2>/dev/null | head -1)"
+    fi
+
+    # ── Go ────────────────────────────────────────────────────────────────────
+    if ! command -v go >/dev/null 2>&1; then
+        echo "Installing Go..."
+        case $PM in
+            apt)    $INSTALL golang-go ;;
+            dnf)    $INSTALL golang ;;
+            pacman) $INSTALL go ;;
+        esac
+    else
+        echo "✓ go:      $(go version)"
+    fi
+
+    # ── C++ (g++ + pkg-config + Catch2) ───────────────────────────────────────
+    if ! command -v g++ >/dev/null 2>&1; then
+        echo "Installing g++..."
+        case $PM in
+            apt)    $INSTALL g++ ;;
+            dnf)    $INSTALL gcc-c++ ;;
+            pacman) $INSTALL gcc ;;
+        esac
+    else
+        echo "✓ g++:     $(g++ --version | head -1)"
+    fi
+    if ! command -v pkg-config >/dev/null 2>&1; then
+        echo "Installing pkg-config..."
+        case $PM in
+            apt)    $INSTALL pkg-config ;;
+            dnf)    $INSTALL pkgconf-pkg-config ;;
+            pacman) $INSTALL pkgconf ;;
+        esac
+    fi
+    if ! pkg-config --exists catch2-with-main 2>/dev/null; then
+        echo "Installing Catch2..."
+        case $PM in
+            apt)    $INSTALL catch2 ;;
+            dnf)    $INSTALL catch2-devel ;;
+            pacman) $INSTALL catch2 ;;
+        esac
+    else
+        echo "✓ catch2:  v$(pkg-config --modversion catch2-with-main)"
+    fi
+
+    # ── Ripes (RISC-V simulator) ──────────────────────────────────────────────
+    echo ""
+    echo "--- Ripes (RISC-V simulator) ---"
+    if [[ -n "${RIPES_PATH:-}" ]]; then
+        echo "✓ RIPES_PATH=${RIPES_PATH} (using env var)"
+    elif command -v ripes >/dev/null 2>&1; then
+        echo "✓ ripes found in PATH: $(which ripes)"
+    elif [[ -x "{{ project_directory }}/ripes/linux/Ripes.AppImage" ]]; then
+        echo "✓ Bundled binary: ripes/linux/Ripes.AppImage"
+        echo "  (lq will use it automatically - no further action needed)"
+    else
+        echo "  Ripes is not packaged for most distros."
+        echo "  Download the AppImage from: https://github.com/mortbopet/Ripes/releases"
+        echo "  Then set: export RIPES_PATH=/path/to/Ripes.AppImage"
+    fi
+
+    echo ""
+    echo "✓ Installation complete. Run 'just check-deps' to verify."
+
+[windows]
+setup:
+    #!/usr/bin/env pwsh
+    $ErrorActionPreference = "Stop"
+
+    # ── Winget check ──────────────────────────────────────────────────────────
+    $hasWinget  = [bool](Get-Command winget  -ErrorAction SilentlyContinue)
+    $hasChoco   = [bool](Get-Command choco   -ErrorAction SilentlyContinue)
+    if (-not $hasWinget -and -not $hasChoco) {
+        Write-Host "✗ Neither winget nor choco found."
+        Write-Host "  Install winget (App Installer from Microsoft Store) or Chocolatey, then re-run."
+        exit 1
+    }
+    function Pkg-Install($wingetId, $chocoId) {
+        if ($hasWinget) { winget install --accept-source-agreements --accept-package-agreements -e --id $wingetId }
+        elseif ($hasChoco) { choco install $chocoId -y }
+    }
+
+    # ── Rust (via rustup) ─────────────────────────────────────────────────────
+    if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+        Write-Host "Installing Rust via rustup..."
+        Pkg-Install "Rustlang.Rustup" "rustup.install"
+        Write-Host "  → Restart your terminal after install, then run 'just setup' again."
+    } else {
+        Write-Host "✓ rustup: $(rustup --version 2>&1)"
+        rustup component add rustfmt clippy 2>$null
+        Write-Host "✓ rustc:   $(rustc --version)"
+        Write-Host "✓ rustfmt: $(rustfmt --version)"
+        Write-Host "✓ clippy:  $(cargo clippy --version)"
+    }
+
+    # ── Python ────────────────────────────────────────────────────────────────
+    if (-not (Get-Command python3 -ErrorAction SilentlyContinue) -and `
+        -not (Get-Command python  -ErrorAction SilentlyContinue)) {
+        Write-Host "Installing Python..."
+        Pkg-Install "Python.Python.3.12" "python"
+    } else {
+        $pyCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+        Write-Host "✓ python:  $(& $pyCmd --version)"
+    }
+    $pyCmd = if (Get-Command python3 -ErrorAction SilentlyContinue) { "python3" } else { "python" }
+    & $pyCmd -m pytest --version 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Installing pytest..."
+        & $pyCmd -m pip install --quiet pytest
+    } else {
+        Write-Host "✓ pytest:  installed"
+    }
+
+    # ── Go ────────────────────────────────────────────────────────────────────
+    if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
+        Write-Host "Installing Go..."
+        Pkg-Install "GoLang.Go" "golang"
+    } else {
+        Write-Host "✓ go:      $(go version)"
+    }
+
+    # ── C++ (MSYS2 MinGW toolchain + Catch2) ─────────────────────────────────
+    #
+    # On Windows the recommended C++ toolchain for lq exercises is MSYS2 with
+    # the UCRT MinGW environment.  MSYS2 provides g++, pkg-config, and Catch2
+    # in a single coherent package set.
+    #
+    #   1. Install MSYS2        : winget install MSYS2.MSYS2
+    #   2. Open "MSYS2 UCRT64"  terminal and run:
+    #        pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-catch2 mingw-w64-ucrt-x86_64-pkg-config
+    #   3. Add C:\msys64\ucrt64\bin to your system PATH.
+    #
+    if (-not (Get-Command g++ -ErrorAction SilentlyContinue)) {
+        Write-Host ""
+        Write-Host "--- C++ toolchain (MSYS2) ---"
+        if (-not (Test-Path "C:\msys64\usr\bin\bash.exe")) {
+            Write-Host "Installing MSYS2..."
+            Pkg-Install "MSYS2.MSYS2" "msys2"
+            Write-Host "  → After install, open 'MSYS2 UCRT64' and run:"
+        } else {
+            Write-Host "  MSYS2 is installed but g++ is not on PATH."
+            Write-Host "  Open 'MSYS2 UCRT64' and run:"
+        }
+        Write-Host "    pacman -S mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-catch2 mingw-w64-ucrt-x86_64-pkg-config"
+        Write-Host "  Then add C:\msys64\ucrt64\bin to your system PATH."
+    } else {
+        Write-Host "✓ g++:     $(g++ --version 2>&1 | Select-Object -First 1)"
+        $hasPkg = [bool](Get-Command pkg-config -ErrorAction SilentlyContinue)
+        if ($hasPkg) {
+            pkg-config --exists catch2-with-main 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "✓ catch2:  v$(pkg-config --modversion catch2-with-main)"
+            } else {
+                Write-Host "⚠ catch2:  not found — install via MSYS2: pacman -S mingw-w64-ucrt-x86_64-catch2"
+            }
+        } else {
+            Write-Host "⚠ pkg-config not found — install via MSYS2: pacman -S mingw-w64-ucrt-x86_64-pkg-config"
+        }
+    }
+
+    # ── Ripes (RISC-V simulator) ──────────────────────────────────────────────
+    Write-Host ""
+    Write-Host "--- Ripes (RISC-V simulator) ---"
+    if ($env:RIPES_PATH) {
+        Write-Host "✓ RIPES_PATH=$($env:RIPES_PATH) (using env var)"
+    } elseif (Get-Command ripes -ErrorAction SilentlyContinue) {
+        Write-Host "✓ ripes found in PATH"
+    } elseif (Test-Path "{{ project_directory }}\ripes\win\Ripes.exe") {
+        Write-Host "✓ Bundled binary: ripes\win\Ripes.exe"
+    } else {
+        Write-Host "  Ripes is not available via winget/choco."
+        Write-Host "  Download from: https://github.com/mortbopet/Ripes/releases"
+        Write-Host '  Then set: $env:RIPES_PATH = "C:\path\to\Ripes.exe"'
+    }
+
+    Write-Host ""
+    Write-Host "✓ Setup complete. Run 'just check-deps' to verify."
 
 # create a release version of the program
 changelog version=version:

@@ -49,11 +49,11 @@ mod discovery {
   fn discovers_all_modules() {
     let (modules, errors) = lq::exercise::discover_exercises(&sample_repo());
 
-    // There should be 5 modules in the fixture repo.
+    // There should be 6 modules in the fixture repo.
     assert_eq!(
       modules.len(),
-      5,
-      "expected 5 modules, got {}: {:?}",
+      6,
+      "expected 6 modules, got {}: {:?}",
       modules.len(),
       modules.iter().map(|m| &m.name).collect::<Vec<_>>()
     );
@@ -167,6 +167,24 @@ mod discovery {
     );
     for ex in &go_mod.exercises {
       assert_eq!(ex.language, lq::exercise::Language::Go);
+    }
+  }
+
+  #[test]
+  fn cpp_exercises_detected() {
+    let (modules, _) = lq::exercise::discover_exercises(&sample_repo());
+
+    let cpp_mod = modules.iter().find(|m| m.name == "06-cpp");
+    assert!(cpp_mod.is_some(), "06-cpp module not found");
+    let cpp_mod = cpp_mod.unwrap();
+
+    assert!(
+      !cpp_mod.exercises.is_empty(),
+      "expected at least 1 C++ exercise, found {}",
+      cpp_mod.exercises.len()
+    );
+    for ex in &cpp_mod.exercises {
+      assert_eq!(ex.language, lq::exercise::Language::Cpp);
     }
   }
 
@@ -487,6 +505,63 @@ mod runner {
   }
 
   #[test]
+  fn verify_cpp_exercise_from_sample_repo() {
+    let (modules, _) = lq::exercise::discover_exercises(&sample_repo());
+    let hello = modules
+      .iter()
+      .find(|m| m.name == "06-cpp")
+      .and_then(|m| m.exercises.iter().find(|e| e.id == "hello_cpp"));
+
+    if let Some(exercise) = hello {
+      let result = lq::runner::verify(exercise, &lq::config::ProjectConfig::default());
+      // The starter returns "" so tests should fail - we only verify the
+      // runner doesn't panic and produces a well-formed result.
+      assert!(result.threshold > 0.0);
+      assert!(result.threshold <= 1.0);
+    }
+  }
+
+  #[test]
+  fn verify_cpp_solution_scores_perfectly() {
+    let (modules, _) = lq::exercise::discover_exercises(&sample_repo());
+    let hello = modules
+      .iter()
+      .find(|m| m.name == "06-cpp")
+      .and_then(|m| m.exercises.iter().find(|e| e.id == "hello_cpp"));
+
+    let exercise = match hello {
+      Some(e) => e,
+      None => return, // skip if exercise not found
+    };
+
+    let starter = exercise.dir.join("main.cpp");
+    let solution = exercise.dir.join("solution").join("main.cpp");
+
+    // Save original starter content
+    let original = fs::read_to_string(&starter).expect("read starter");
+
+    // Copy the reference solution into place
+    fs::copy(&solution, &starter).expect("copy solution");
+
+    let result = lq::runner::verify(exercise, &lq::config::ProjectConfig::default());
+
+    // Restore the starter before any assertions (so we don't leave the
+    // fixture dirty on failure).
+    fs::write(&starter, &original).expect("restore starter");
+
+    assert_eq!(
+      result.total, 1,
+      "expected 1 test case, got {} — output:\n{}",
+      result.total, result.output
+    );
+    assert!(
+      (result.score - 1.0).abs() < f64::EPSILON,
+      "expected perfect score, got {} — output:\n{}",
+      result.score, result.output
+    );
+  }
+
+  #[test]
   fn verify_rust_exercise_from_sample_repo() {
     let (modules, _) = lq::exercise::discover_exercises(&sample_repo());
     let hello = modules
@@ -524,7 +599,7 @@ mod runner {
   fn language_thresholds_are_sane() {
     use lq::exercise::Language;
 
-    for lang in [Language::Rust, Language::Go, Language::Python, Language::Riscv, Language::Text] {
+    for lang in [Language::Rust, Language::Go, Language::Cpp, Language::Python, Language::Riscv, Language::Text] {
       let t = lang.threshold();
       assert!((0.0..=1.0).contains(&t), "{:?} threshold {t} is out of range", lang);
     }
