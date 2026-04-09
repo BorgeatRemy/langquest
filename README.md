@@ -6,7 +6,7 @@
   <img src="img/lq.svg" alt="LangQuest logo" width="400">
 </div>
 
-A terminal-based, interactive programming exercise runner. Inspired by [Rustlings](https://github.com/rust-lang/rustlings) and [100 Exercises to Learn Rust](https://rust-exercises.com/), LangQuest extends the concept to multiple languages - work through hands-on exercises in **Rust**, **Go**, **Python**, **RISC-V assembly**, and **Markdown** with real-time feedback, progress tracking, and a built-in hint system.
+A terminal-based, interactive programming exercise runner. Inspired by [Rustlings](https://github.com/rust-lang/rustlings) and [100 Exercises to Learn Rust](https://rust-exercises.com/), LangQuest extends the concept to multiple languages - work through hands-on exercises in **Rust**, **Go**, **C++**, **Python**, **RISC-V assembly**, and **Markdown** with real-time feedback, progress tracking, and a built-in hint system.
 
 ![demo](img/lq-demo.gif)
 
@@ -29,7 +29,7 @@ A terminal-based, interactive programming exercise runner. Inspired by [Rustling
 
 ## Features
 
-- **Multi-language support** - Rust, Go, Python, RISC-V assembly, and Markdown/conceptual exercises
+- **Multi-language support** - Rust, Go, C++, Python, RISC-V assembly, and Markdown/conceptual exercises
 - **Live verification** - file saves trigger immediate re-runs; results stream into the TUI without leaving the editor
 - **Paged exercise view** - Theory → Task → Output → Solution, navigated with arrow keys
 - **Progressive hints** - reveal hints one at a time; after all hints, optionally unlock the full solution
@@ -66,8 +66,11 @@ Depending on which languages your exercises use, install the corresponding toolc
 | **Rust** | Install via [rustup](https://rustup.rs/) |
 | **Python** | Install Python 3.x and pytest: `pip install pytest` |
 | **Go** | Install from [go.dev](https://go.dev/dl/) or via package manager |
+| **C++** | `g++` (Xcode CLT / `apt install g++`) and [Catch2](https://github.com/catchorg/Catch2) (`brew install catch2` / `apt install catch2`) |
 | **RISC-V** | GNU toolchain (`apt install gcc-riscv64-linux-gnu`) or [Ripes](https://github.com/mortbopet/Ripes) simulator |
 | **Markdown** | No additional tools required - verification is regex-based |
+
+> **Quick setup:** Run `just setup` to install all toolchains automatically (macOS, Linux, and Windows supported).
 
 ## Getting Started
 
@@ -144,7 +147,7 @@ Each exercise lives in its own directory within a module:
 └── <NN>-<exercise>/
     ├── 01-theory.md           ← optional background reading
     ├── 02-task.md             ← required task description with frontmatter
-    ├── main.<ext>             ← student source file (rs, go, py, md, asm)
+    ├── main.<ext>             ← student source file (rs, go, cpp, py, md, asm)
     └── solution/
         ├── main.<ext>         ← reference solution
         └── solution.md        ← hints and explanation
@@ -180,7 +183,7 @@ the string `"Hello, World!"` exactly.
 |---------------|--------------------------------------------------|-------------|
 | `id`          | string                                           | Unique snake_case identifier (key in `lq.toml`) |
 | `name`        | string                                           | Display name in the exercise table |
-| `language`    | string (`rust`, `go`, `python`, `riscv`, `text`) | language type of exercise |
+| `language`    | string (`rust`, `go`, `cpp`, `python`, `riscv`, `text`) | language type of exercise |
 | `difficulty`  | integer (1-5)                                    | Shown as stars in the Overview |
 | `description` | string                                           | One-line summary |
 | `topics`      | array                                            | Tags shown in the Topics column |
@@ -213,12 +216,36 @@ mod tests {
 }
 ```
 
-**Go** (`main.go` + `main_test.go`) - Uses `TestXxx` functions:
+**Go** (`main.go` + `main_test.go`) - Uses `testing.T` functions:
 
 ```go
 // TODO: implement the Add function
 func Add(a, b int) int {
     return 0
+}
+```
+
+**C++** (`main.cpp` + `main_test.cpp`) - Uses [Catch2](https://github.com/catchorg/Catch2) test cases:
+
+```cpp
+// main.cpp - student source
+#include <string>
+
+// TODO: implement the greeting function
+std::string greeting() {
+    return "";
+}
+```
+
+```cpp
+// main_test.cpp - test file (provided, not edited by student)
+#include <catch2/catch_test_macros.hpp>
+#include <string>
+
+std::string greeting();
+
+TEST_CASE("greeting returns correct string", "[greeting]") {
+    REQUIRE(greeting() == "Hello, World!");
 }
 ```
 
